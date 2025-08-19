@@ -58,8 +58,6 @@ def has_duplicates() -> Callable[[pd.DataFrame], bool]:
     return lambda df: bool(df.duplicated().any())
 
 
-
-
 def inspect_duplicate_rows(df: pd.DataFrame, example_index: int) -> pd.DataFrame:
     """
     Inspect duplicate rows in a DataFrame by a single example.
@@ -95,7 +93,6 @@ def duplicate_count_per_row(
         result = sizes[any_col].transform('size')
         result.name = "duplicate_count"
 
-
     else:
         mask = df[cols].notna().all(axis=1)
         sizes = df.loc[mask, cols].groupby(cols, dropna=False)    
@@ -122,3 +119,24 @@ def drop_duplicates(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: The DataFrame with duplicates removed.
     """
     return df.drop_duplicates(keep='first', inplace=False)
+
+# create date cutoff function 
+def data_cutoff_dates(df: pd.DataFrame, col_datetime: str = 'id_Datetime', start_date: str = '2020-01-01', end_date: str = '2024-06-18', return_series: bool = False) -> pd.DataFrame | pd.Series:
+    """Filter DataFrame by date range."""
+    
+    df_copy = df.copy()
+    df_copy[col_datetime] = pd.to_datetime(df_copy[col_datetime])
+    
+    mask = (df_copy[col_datetime] >= start_date) & (df_copy[col_datetime] <= end_date)
+    
+    if not return_series:
+        return df_copy[mask]
+    else:
+        return df_copy.loc[mask, col_datetime]
+
+        
+def merge_on_hour_ceiling (df_left: pd.DataFrame, df_right: pd.DataFrame, left_on: str = 'ceiling_hour', right_on: str = 'id_Datetime', how: str = 'left') -> pd.DataFrame:
+
+    """Merge two DataFrames on the hourly ceiling of their datetime columns."""
+
+    return pd.merge(df_left, df_right, left_on=left_on, right_on=right_on, how=how)          # type: ignore
