@@ -18,36 +18,34 @@ class Step:
 def run_pipeline(dfs: Dict[str, pd.DataFrame], plan: Mapping[str, Iterable[Step]], *, log: bool = True) -> Dict[str, pd.DataFrame]:
     """Apply per-DataFrame step sequences from `plan` and return new dict."""
     out: Dict[str, pd.DataFrame] = {}
+    feature_columns: Dict[str, Dict[str, list]] = {}
     for key, df in dfs.items():
         steps = list(plan.get(key, []))
         if log:
             logging.info("▶ %s: %d steps", key, len(steps))
+        feature_columns[key] = {}
         for step in steps:
+            before_cols = set(df.columns)
             if step.when and not step.when(df):
                 if log:
                     logging.info("  - %s: skipped (condition not met)", step.name)
                 continue
             t0, before = time.time(), df.shape
             try:
-                df = df.pipe(step.fn, **step.kwargs)  # always DF -> DF
+                df = df.pipe(step.fn, **step.kwargs)  
             except Exception as e:
                 if log:
                     logging.error("  - %s: failed (%s)", step.name, e)
                     continue
+            after_cols = set(df.columns)
+            new_cols = list(after_cols - before_cols)
+            feature_columns[key][step.name] = new_cols
             if log:
                 dt = (time.time() - t0) * 1000  # ms
                 logging.info("  - %s: %s -> %s (%d ms)", step.name, before, df.shape, dt)
         out[key] = df
+    out['feature_columns'] = feature_columns         # type: ignore
     return out
-
-# # Example pipeline input
-# pipeline = {
-#     "check_ins": [
-#         Step("add_feature", when=has_cols("id"), fn=partial(add_feature, src="id", dest='id_Datetime', function=parse_time_column))
-#     ]
-# }
-# dfs_processed = run_pipeline(dfs, pipeline)
-
 
 
 # Predicates
@@ -56,6 +54,10 @@ def has_cols(*cols: str) -> Callable[[pd.DataFrame], bool]:
 
 def has_duplicates() -> Callable[[pd.DataFrame], bool]:
     return lambda df: bool(df.duplicated().any())
+
+def is_timedelta_column(*cols: str) -> Callable[[pd.DataFrame], bool]:
+    """Return True if the column is of timedelta dtype."""
+    return lambda df: all(not pd.api.types.is_numeric_dtype(df[col]) for col in cols)
 
 
 def inspect_duplicate_rows(df: pd.DataFrame, example_index: int) -> pd.DataFrame:
