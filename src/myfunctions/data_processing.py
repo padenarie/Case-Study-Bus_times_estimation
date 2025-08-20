@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Callable, Dict, Iterable, Mapping, Any, Sequence
+from typing import Callable, Dict, Iterable, Mapping, Any, Sequence, Literal
 import logging
 import pandas as pd
 import time, logging
@@ -321,3 +321,97 @@ def attach_weighted_checkins_fast(
     )
 
     return out.drop(columns=["__dur_s__", "__t_end__"])
+
+
+def make_categorical(df:pd.DataFrame, cols:list[str]) -> pd.DataFrame:
+    for col in cols:
+        df[col] = df[col].astype("category")
+    return df
+
+def convert_columns_by_type(df: pd.DataFrame, columns: list, type_dict: dict, formats: dict = None) -> pd.DataFrame:        # type: ignore
+    """
+    Convert specified columns in a DataFrame to datetime or timedelta format based on type_dict.
+    type_dict: dict mapping column name to 'datetime' or 'timedelta'.
+    formats: dict mapping column name to format string (only used for datetime).
+    Returns a copy of the DataFrame. Logs failures.
+    """
+    import logging
+    logger = logging.getLogger("convert_columns_by_type")
+    df_copy = df.copy()
+    formats = formats or {}
+    for col in columns:
+        typ = type_dict.get(col, 'datetime')
+        try:
+            if typ == 'datetime':
+                df_copy[col] = pd.to_datetime(df_copy[col], errors='coerce', format=formats.get(col))
+                if df_copy[col].isna().all():
+                    logger.warning(f"Column '{col}' could not be converted to datetime: all values are NaT after conversion.")
+            elif typ == 'timedelta':
+                df_copy[col] = pd.to_timedelta(df_copy[col], errors='coerce')
+                if df_copy[col].isna().all():
+                    logger.warning(f"Column '{col}' could not be converted to timedelta: all values are NaT after conversion.")
+            else:
+                logger.error(f"Unknown type '{typ}' for column '{col}'. Use 'datetime' or 'timedelta'.")
+        except Exception as e:
+            logger.error(f"Failed to convert column '{col}' to {typ}: {e}")
+    return df_copy
+
+def drop_rows_by_percentage(
+    df: pd.DataFrame,
+    col_x: str,
+    col_y: str,
+    percentage: float,
+    *,
+    inclusive: bool = False,                 # if True: drop when X >= pct% of Y (instead of >)
+    na: Literal["keep", "drop"] = "keep",    # what to do if X or Y is NaN
+    coerce_numeric: bool = False,            # try to coerce non-numeric columns
+    inplace: bool = False                    # modify df in place
+) -> pd.DataFrame:
+    """
+    Drop rows where df[col_x] is higher than a given percentage of df[col_y].
+
+    Args:
+        df: Input DataFrame.
+        col_x, col_y: Column names (strings).
+        percentage: The percentage threshold. Accepts either 1.5 (150%) or 150.
+        inclusive: If True, drop rows where X >= pct% * Y (else strictly >).
+        na: If 'keep', rows with NaN in X or Y are kept; if 'drop', they’re dropped.
+        coerce_numeric: If True, try to convert X and Y to numeric (invalid parsed as NaN).
+        inplace: If True, operate in place and return the same df reference.
+
+    Returns:
+        A DataFrame with offending rows removed (or the same object if inplace=True).
+    """
+    if col_x not in df.columns or col_y not in df.columns:
+        missing = [c for c in (col_x, col_y) if c not in df.columns]
+        raise KeyError(f"Missing column(s): {missing}")
+
+    # Normalize percentage: allow 150 (→1.5) or 1.5
+    pct = float(percentage)
+    pct = pct / 100.0 if pct > 1.0 else pct
+    if pct < 0:
+        raise ValueError("percentage must be non-negative")
+
+    # Work on a view or the original
+    out = df if inplace else df.copy()
+
+    # Optional numeric coercion
+    if coerce_numeric:
+        out[col_x] = pd.to_numeric(out[col_x], errors="coerce")
+        out[col_y] = pd.to_numeric(out[col_y], errors="coerce")
+
+    # Build condition: rows to DROP
+    threshold = pct * out[col_y]
+    cond = out[col_x] >= threshold if inclusive else out[col_x] > threshold
+
+    # NaN policy
+    if na == "keep":
+        cond = cond.fillna(False)  # NaNs in X or Y -> do NOT drop
+    elif na == "drop":
+        cond = cond.fillna(True)   # any NaN in X or Y -> drop
+    else:
+        raise ValueError("na must be 'keep' or 'drop'")
+
+    # Filter
+    out.drop(index=out.index[cond], inplace=True)
+    return out
